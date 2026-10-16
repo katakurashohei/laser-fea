@@ -1,0 +1,16 @@
+# A simple rectangular crate, 0.8 x 0.5 x 0.4 m, for testing OBJ import in
+# the interactive GUI (drag this file onto the browser window).
+v -0.4 -0.25 -0.2
+v  0.4 -0.25 -0.2
+v  0.4  0.25 -0.2
+v -0.4  0.25 -0.2
+v -0.4 -0.25  0.2
+v  0.4 -0.25  0.2
+v  0.4  0.25  0.2
+v -0.4  0.25  0.2
+f 1 2 3 4
+f 5 8 7 6
+f 1 5 6 2
+f 2 6 7 3
+f 3 7 8 4
+f 4 8 5 1

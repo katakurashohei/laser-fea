@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>laser-fea — interactive shell solver</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #12151a; color: #e8e8e8;
+               font-family: -apple-system, Helvetica, Arial, sans-serif; overflow: hidden; }
+  #canvas-holder { position: absolute; inset: 0; }
+  canvas { display: block; }
+
+  .panel { position: absolute; background: rgba(20, 23, 28, 0.88); border: 1px solid #333;
+           border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+  #controls { top: 12px; left: 12px; width: 250px; }
+  #stats { top: 12px; right: 12px; width: 250px; }
+
+  h1 { font-size: 14px; margin: 0 0 8px; color: #fff; }
+  label { display: block; margin-top: 8px; color: #bbb; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  input[type=range] { width: 140px; }
+  select, button { background: #23272e; color: #eee; border: 1px solid #444; border-radius: 4px;
+                    padding: 4px 6px; font-size: 12px; }
+  button { cursor: pointer; margin-top: 8px; width: 100%; }
+  button:hover { background: #2e333c; }
+  button.toggle-on { background: #2b5fa8; border-color: #4a7fc8; color: #fff; }
+  button.toggle-on:hover { background: #326bb8; }
+  .val { font-variant-numeric: tabular-nums; color: #7fd; }
+  .muted { color: #889; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+
+  #dropOverlay { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+                 background: rgba(90, 140, 220, 0.15); border: 3px dashed #5b8fd6; z-index: 10;
+                 font-size: 22px; color: #dbe8ff; pointer-events: none; }
+  #dropOverlay.active { display: flex; }
+  #importMsg { position: absolute; bottom: 12px; right: 12px; max-width: 320px; }
+  #importMsg.hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="canvas-holder"></div>
+<div id="dropOverlay">Drop .obj file to fit &amp; remesh as a box</div>
+<div id="importMsg" class="panel hidden"></div>
+
+<div id="controls" class="panel">
+  <h1>Load controls</h1>
+  <label>Color by
+    <select id="colorBy">
+      <option value="displacement">Displacement magnitude</option>
+      <option value="curvature">Bending curvature</option>
+    </select>
+  </label>
+  <label class="row">Deform scale <span class="val" id="scaleVal">20</span>
+    <input type="range" id="scale" min="1" max="200" value="20">
+  </label>
+  <label class="row">Force per drag-unit (N) <span class="val" id="forceScaleVal">4000</span>
+    <input type="range" id="forceScale" min="200" max="20000" step="200" value="4000">
+  </label>
+  <label class="row">Mesh resolution <span class="val"><span id="meshResVal">12</span> <span id="meshResKind" class="muted">per face</span></span>
+    <input type="range" id="meshRes" min="1" max="20" step="1" value="12">
+  </label>
+  <button id="resetBtn">Reset (remove load)</button>
+  <button id="resetCubeBtn">Reset mesh to default cube</button>
+  <h1 style="margin-top:14px">Support controls</h1>
+  <button id="fixModeBtn">Fix-support mode: OFF</button>
+  <button id="clearFixedBtn">Clear all fixed nodes</button>
+  <button id="autoFixedBtn">Reset fixed to auto (lowest layer)</button>
+  <h1 style="margin-top:14px">Material stiffness</h1>
+  <label class="row">Plate E <span class="val"><span id="plateStiffnessVal">9.0</span> GPa</span>
+    <input type="range" id="plateStiffness" min="1" max="30" step="0.5" value="9">
+  </label>
+  <label class="row">Joint stiffness <span class="val"><span id="jointStiffnessVal">40</span>%</span>
+    <input type="range" id="jointStiffness" min="1" max="100" step="1" value="40">
+  </label>
+</div>
+
+<div id="stats" class="panel">
+  <h1>Result</h1>
+  <div id="statsBody" class="muted">Click a node and drag to apply a load.</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
