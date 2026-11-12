@@ -23,7 +23,9 @@ def solve(model: ShellModel) -> ShellResult:
         mat = model.materials[model.element_material[elem_idx]]
         k_elem, _area = quad_shell_stiffness(coords, mat.E, mat.nu, mat.t)
         dofs = np.array([n * 6 + d for n in quad for d in range(6)])
-        K[np.ix_(dofs, dofs)] += k_elem
+        # np.add.at (not `K[np.ix_(...)] +=`) so an element that lists a node
+        # twice (a collapsed quad, i.e. a triangle) still assembles fully.
+        np.add.at(K, np.ix_(dofs, dofs), k_elem)
 
     F = np.zeros(ndof)
     for node, load in model.loads.items():

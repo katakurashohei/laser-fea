@@ -33,6 +33,7 @@ from ..cli import JOINT_STIFFNESS_FRACTION, JOINT_WIDTH, PLYWOOD_E, PLYWOOD_NU, 
 from ..mesh import box_mesh_with_joints
 from ..model import ShellMaterial, ShellModel
 from ..obb import fit_oriented_box
+from ..plates import looks_like_plates, mesh_plates
 from ..rectilinear import remesh_rectilinear
 from ..solver import solve
 
@@ -44,6 +45,11 @@ RECTILINEAR_N = 5        # elements per already-merged panel-rectangle side
 MIN_MESH_N, MAX_MESH_N = 1, 20   # range of the GUI's "Mesh resolution" slider
 MAX_NODES = 1800         # the solver assembles a dense K, so memory and time
                           # grow as (6 * nodes)^2 — refuse meshes past this
+PLATES_N = 1             # default resolution for plate-based imports: the
+                          # sparsest mesh (target edge = largest dimension / n,
+                          # capped per plate at 3x its width); slider refines
+MM_DETECT_EXTENT = 10.0  # imports larger than this (in file units) are
+                          # assumed to be in mm and scaled to m
 
 app = Flask(__name__, static_folder=None)
 
@@ -119,6 +125,25 @@ def _rebuild_rectilinear(triangles, n=RECTILINEAR_N):
     return nodes
 
 
+def _plate_h(groups, n):
+    """Mesh resolution n -> target edge length: largest dimension / n."""
+    pts = np.asarray([p for g in groups for t in g for p in t], dtype=float)
+    return float(np.ptp(pts, axis=0).max()) / n
+
+
+def _rebuild_plates(groups, n):
+    nodes, plate_quads, joint_quads, bottom_ids, _ = mesh_plates(
+        groups, _plate_h(groups, n), joint_width=JOINT_WIDTH)
+    _check_size(nodes)
+
+    global _faces, _mesh_source, _mesh_n
+    _set_mesh_state(nodes, plate_quads, joint_quads, bottom_ids, "auto (lowest nodes)")
+    _faces = None
+    _mesh_source = ("plates", groups)
+    _mesh_n = n
+    return nodes
+
+
 _rebuild_mesh((CUBE_SIZE / 2, CUBE_SIZE / 2, CUBE_SIZE / 2))
 
 
@@ -144,7 +169,8 @@ def _mesh_json(**extra):
         "resolution": _mesh_n,
         "min_resolution": MIN_MESH_N,
         "max_resolution": MAX_MESH_N,
-        "resolution_kind": "per face" if _mesh_source[0] == "box" else "per panel",
+        "resolution_kind": {"box": "per face", "rectilinear": "per panel",
+                            "plates": "across model"}[_mesh_source[0]],
         **extra,
     })
 
@@ -178,6 +204,8 @@ def api_resolution():
         if _mesh_source[0] == "box":
             _, half_extents, center, axes = _mesh_source
             _rebuild_mesh(half_extents, n=n, center=center, axes=axes)
+        elif _mesh_source[0] == "plates":
+            _rebuild_plates(_mesh_source[1], n=n)
         else:
             _rebuild_rectilinear(_mesh_source[1], n=n)
     except ValueError as e:
@@ -223,6 +251,41 @@ def api_import_obj():
     body = request.get_json(force=True)
     vertices = body.get("vertices", [])
     triangles = body.get("triangles", [])
+    groups = [g for g in body.get("groups", []) if g]
+
+    # The solver works in SI (m, Pa, N). CAD/laser-cutting tools (e.g. kyub)
+    # usually export in millimeters, which would make a chair 740 "m" tall
+    # and the 12 mm plywood thickness / 20 mm joint width absurdly thin
+    # relative to it. Nothing we'd plausibly analyze is > 10 m across, so
+    # treat larger extents as mm and convert.
+    unit_scale = 1.0
+    if len(vertices):
+        extent = float(np.ptp(np.asarray(vertices, dtype=float), axis=0).max())
+        if extent > MM_DETECT_EXTENT:
+            unit_scale = 1e-3
+    if unit_scale != 1.0:
+        vertices = (np.asarray(vertices, dtype=float) * unit_scale).tolist()
+        triangles = (np.asarray(triangles, dtype=float) * unit_scale).tolist()
+        groups = [(np.asarray(g, dtype=float) * unit_scale).tolist() for g in groups]
+    units = "mm (converted to m)" if unit_scale != 1.0 else "m"
+
+    # Tier 0: a plate-based export (kyub etc.) — one flat polygon per OBJ
+    # object. Mesh those panels directly; this is exact, unlike the
+    # rectilinear/box tiers, and handles tilted/splayed panels.
+    if len(vertices) and looks_like_plates(
+            groups, float(np.ptp(np.asarray(vertices, dtype=float), axis=0).max())):
+        last_error = None
+        for n in range(PLATES_N, MIN_MESH_N - 1, -1):
+            try:
+                _rebuild_plates(groups, n)
+                break
+            except ValueError as e:
+                last_error = str(e)
+        else:
+            return jsonify({"error": last_error}), 400
+        dims = (_nodes.max(axis=0) - _nodes.min(axis=0)).tolist()
+        return _mesh_json(fitted_dimensions=dims, method="plate mesh",
+                          n_groups=len(groups), units=units)
 
     if triangles:
         try:
@@ -233,12 +296,21 @@ def api_import_obj():
         except Exception as e:
             rectilinear_error = str(e)
         else:
-            try:
-                nodes = _rebuild_rectilinear(triangles)
-            except ValueError as e:
-                return jsonify({"error": str(e)}), 400
+            # Complex shapes (e.g. a chair: many panels) can blow past
+            # MAX_NODES at the default density — step down to the finest
+            # density that fits instead of refusing the import outright.
+            nodes = None
+            for n in range(RECTILINEAR_N, MIN_MESH_N - 1, -1):
+                try:
+                    nodes = _rebuild_rectilinear(triangles, n=n)
+                    break
+                except ValueError as e:
+                    last_error = str(e)
+            if nodes is None:
+                return jsonify({"error": last_error}), 400
             dims = (nodes.max(axis=0) - nodes.min(axis=0)).tolist()
-            return _mesh_json(fitted_dimensions=dims, method="rectilinear reconstruction")
+            return _mesh_json(fitted_dimensions=dims, method="rectilinear reconstruction",
+                              units=units)
     else:
         rectilinear_error = "no triangle data sent"
 
@@ -260,7 +332,8 @@ def api_import_obj():
 
     return _mesh_json(fitted_dimensions=[float(2 * h) for h in half_extents],
                        method="oriented-bounding-box fit",
-                       rectilinear_fallback_reason=rectilinear_error)
+                       rectilinear_fallback_reason=rectilinear_error,
+                       units=units)
 
 
 @app.route("/api/solve", methods=["POST"])

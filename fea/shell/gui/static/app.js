@@ -578,6 +578,7 @@ async function importObjFile(file) {
 
   const vertices = [];
   const triangles = [];
+  const groups = [];  // one triangle list per OBJ object (= one plate in a kyub export)
   object3d.traverse((child) => {
     if (!(child.isMesh && child.geometry && child.geometry.attributes.position)) return;
     const geom = child.geometry;
@@ -591,15 +592,21 @@ async function importObjFile(file) {
     };
 
     for (let i = 0; i < pos.count; i++) vertices.push(worldPt(i));
+    const group = [];
+    groups.push(group);
 
     if (geom.index) {
       const idx = geom.index.array;
       for (let i = 0; i + 2 < idx.length; i += 3) {
-        triangles.push([worldPt(idx[i]), worldPt(idx[i + 1]), worldPt(idx[i + 2])]);
+        const t = [worldPt(idx[i]), worldPt(idx[i + 1]), worldPt(idx[i + 2])];
+        triangles.push(t);
+        group.push(t);
       }
     } else {
       for (let i = 0; i + 2 < pos.count; i += 3) {
-        triangles.push([worldPt(i), worldPt(i + 1), worldPt(i + 2)]);
+        const t = [worldPt(i), worldPt(i + 1), worldPt(i + 2)];
+        triangles.push(t);
+        group.push(t);
       }
     }
   });
@@ -614,15 +621,20 @@ async function importObjFile(file) {
     const resp = await fetch("/api/import_obj", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vertices, triangles }),
+      body: JSON.stringify({ vertices, triangles, groups }),
     });
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
     buildScene(data);
     resetLoad();
     const [dx, dy, dz] = data.fitted_dimensions;
-    const dims = `${dx.toFixed(3)} x ${dy.toFixed(3)} x ${dz.toFixed(3)} m`;
-    if (data.method === "rectilinear reconstruction") {
+    const dims = `${dx.toFixed(3)} x ${dy.toFixed(3)} x ${dz.toFixed(3)} m` +
+      (data.units && data.units !== "m" ? `, file units: ${data.units}` : "");
+    if (data.method === "plate mesh") {
+      setImportMsg(
+        `Meshed ${data.n_groups} flat plates directly (bbox ${dims}). ` +
+        `${data.n_plate} plate + ${data.n_joint} joint elements, clamped: ${data.bottom_face}.`, false);
+    } else if (data.method === "rectilinear reconstruction") {
       setImportMsg(
         `Reconstructed exactly as a rectilinear solid (bbox ${dims}). ` +
         `${data.n_plate} elements, clamped: ${data.bottom_face}.`, false);

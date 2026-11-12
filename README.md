@@ -156,10 +156,42 @@ that size a solve takes a few seconds.
 ### Importing OBJ files
 
 Drag-and-drop a `.obj` file anywhere onto the GUI page to replace the
-current mesh. Our shell element needs a clean structured quad grid, and an
-arbitrary OBJ is typically an irregular triangle soup that doesn't weld
-into one, so nothing ever meshes the import's raw surface directly.
-Instead there are two tiers, tried in order:
+current mesh. Files larger than 10 units across are assumed to be in
+**millimeters** (as kyub and most laser-cutting tools export) and scaled
+to meters, since the solver works in SI.
+
+**Plate-based exports (kyub etc.) are meshed plate by plate**
+(`fea/shell/plates.py: mesh_plates`). If the OBJ has several
+objects/groups and each one is flat (e.g. kyub's `o plate-0`, `o plate-1`,
+…), every group is one plywood plate with its own nodes.
+
+The mesh is block-structured and sparse:
+- Each plate's outline is split into a few convex 4-sided patches, using
+  only its own corners and choosing the split with the best worst angle. A
+  plate with a hole falls back to pairing its triangles into quads. Any
+  triangle that's left becomes a grid collapsed at one corner.
+- Every patch gets a structured quad grid.
+- Segment counts are linked between opposite patch sides, shared patch
+  edges and plate-to-plate seams, so neighbouring grids and joints match
+  node for node.
+- Element size is the largest dimension divided by the resolution n, but
+  never more than 3x a plate's width, so narrow strips don't become
+  slivers. Imports start at n = 1, the sparsest mesh: about 560 plate
+  elements for the kyub chair.
+
+As in the box path, each plate is pulled back from every edge it shares
+with another plate by the joint width (20 mm, limited to a quarter of a
+narrow plate's width). The gap is bridged by a box-joint strip in the
+joint material. Plates connect *only* through those strips, so the
+joint-stiffness slider controls exactly the joints. Plates can meet at any
+angle (splayed legs, tilted backrests). As in the box path, a small gap is
+left where three plates meet at a corner.
+
+Supports default to every node within 0.5% of the model height of the
+lowest point, so feet that differ by a millimeter are all clamped.
+
+Anything else (one closed triangle soup) goes through two tiers, tried in
+order:
 
 1. **Rectilinear reconstruction** (`fea/shell/rectilinear.py:
    remesh_rectilinear`) — handles *any* union of boxes sharing one
@@ -298,6 +330,8 @@ Shell/plate solver (`fea/shell/`):
   as the fallback for a non-rectilinear OBJ import (turns its vertices
   into a (center, orientation, dimensions) that `box_mesh_with_joints`
   can remesh).
+- `plates.py` — `mesh_plates`: direct conforming quad mesh of a
+  plate-per-object OBJ (kyub exports), tried first on import.
 - `rectilinear.py` — `remesh_rectilinear`: the primary OBJ-import path,
   for any union of boxes sharing one orthogonal frame. Detects the
   shape's true axes from face-normal clustering, snaps vertices to a
